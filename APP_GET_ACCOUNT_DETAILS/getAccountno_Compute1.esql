@@ -1,0 +1,109 @@
+path GetAccountDetailsProc;
+
+
+DECLARE S NAMESPACE 'http://schemas.xmlsoap.org/soap/envelope/';
+CREATE COMPUTE MODULE getAccountno_Compute1
+	CREATE FUNCTION Main() RETURNS BOOLEAN
+	BEGIN
+		
+		 CALL CopyEntireMessage();
+		RETURN TRUE;
+	END;
+
+	
+	CREATE PROCEDURE CopyEntireMessage() BEGIN
+		
+		DECLARE ccsidRef, encodeRef INTEGER;
+
+		SET ccsidRef = InputRoot.Properties.CodedCharSetId;
+		SET encodeRef = InputRoot.Properties.Encoding;
+		DECLARE inRef REFERENCE TO InputRoot.XMLNSC;
+		DECLARE application_name CHARACTER ApplicationLabel;
+		DECLARE created_on TIMESTAMP CURRENT_TIMESTAMP;
+
+		CREATE FIELD Environment.Variables.Values;
+		DECLARE envref REFERENCE TO Environment.Variables.Values;
+
+		SET Environment.logType = 'HOST_RES :';
+		SET Environment.payload = CAST(ASBITSTREAM (inRef)AS CHARACTER CCSID ccsidRef ENCODING encodeRef);
+
+		IF envref.Dbloggingflag = 'Y' THEN
+			CALL DB_LOGGING_PROC(created_on,application_name, OutputRoot, Environment);
+		END IF;
+
+		IF envref.Consolelogflag = 'Y' THEN
+			LOG EVENT VALUES('HOST_RES: ', Environment.payload, application_name, MessageFlowLabel, Environment."X-Request-Id", created_on,BrokerName,ExecutionGroupLabel,NodeLabel);
+		END IF;
+		-- Following Lines of Code is to Transform Host Response in SOAP Format to Channel Response in JSON Format
+		--DECLARE inrefRes REFERENCE TO InputRoot.XMLNSC.*:Envelope.*:Body.*:SBGetAccountDetailsResponse.Status;
+		-- DECLARE inrefBody REFERENCE TO InputRoot.XMLNSC.*:Envelope.*:Body.*:SBGetAccountDetailsResponse.*:SBGETACCOUNTDETAILSType.*:gSBGETACCOUNTDETAILSDetailType.*:mSBGETACCOUNTDETAILSDetailType;
+
+		DECLARE inrefBody REFERENCE TO InputRoot.XMLNSC.Result.CustomerDetails;
+
+
+		CREATE FIELD OutputRoot;
+		CREATE LASTCHILD OF OutputRoot DOMAIN('JSON');
+		CREATE FIELD OutputRoot.JSON.Data;
+		DECLARE outRef REFERENCE TO OutputRoot.JSON.Data;
+		-- IF inrefRes.successIndicator = 'T24Error' THEN
+		-- SET OutputRoot.HTTPResponseHeader."X-Original-HTTP-Status-Code" = 500;
+		-- SET outRef.statusCode = 500; --InputRoot.HTTPResponseHeader."X-Original-HTTP-Status-Code";
+		-- SET outRef.timestamp = CURRENT_TIMESTAMP;
+		-- SET outRef.path = COALESCE(Environment.path, InputLocalEnvironment.REST.Input.Path);
+		-- SET outRef.requestId = Environment."X-Request-Id";
+		-- SET outRef.servicecode = Environment.servicecode;
+		-- SET outRef.title = inrefRes.successIndicator;
+		-- SET outRef.details = 'Unfortunately, an internal server error prevented us from proceeding with your request. Try again later.';
+		-- SET Environment.logType = 'APP_RES';
+		-- SET Environment.payload = CAST(ASBITSTREAM (OutputRoot.JSON.Data)AS CHARACTER CCSID ccsidRef ENCODING encodeRef);
+		-- --newly added
+		-- SET Environment.errorRes = outRef.details;
+
+		IF envref.Dbloggingflag = 'Y' THEN
+			CALL ERROR_LOGGING_PROC(created_on, application_name, MessageFlowLabel, OutputRoot, Environment);
+		END IF;
+
+		IF envref.Consolelogflag = 'Y' THEN
+			LOG EVENT VALUES('APP_RES:', Environment.payload, application_name, MessageFlowLabel, Environment.id, created_on,BrokerName,ExecutionGroupLabel,NodeLabel);
+		END IF;
+		-- ELSE
+		--ss SET OutputRoot.JSON.Data.statusCode = InputRoot.HTTPResponseHeader."X-Original-HTTP-Status-Code";
+		SET OutputRoot.JSON.Data.message = 'Operation performed successfully';
+
+		SET outRef.data.customerId = COALESCE(FIELDVALUE(inrefBody.*:CUSTOMERID),'null');
+		SET outRef.data.accountNumber = COALESCE(FIELDVALUE(inrefBody.*:ACCOUNTNUMBER),'null');
+		SET outRef.data.iban = COALESCE(FIELDVALUE(inrefBody.*:IBAN),'null');
+		SET outRef.data.nib = COALESCE(FIELDVALUE(inrefBody.*:NIB),'null');
+		SET outRef.data.swift = COALESCE(FIELDVALUE(inrefBody.*:SWIFT),'null');
+		SET outRef.data.accountHolderName = COALESCE(FIELDVALUE(inrefBody.*:CUSTOMERNAME),'null');
+		SET outRef.data.branchCode = COALESCE(FIELDVALUE(inrefBody.*:BRANCHCODE),'null');
+		SET outRef.data.currency = COALESCE(FIELDVALUE(inrefBody.*:CURRENCY),'null');
+		SET outRef.data.accountType = COALESCE(FIELDVALUE(inrefBody.*:ACCOUNTCATEGORY),'null');
+		SET outRef.data.balance = COALESCE(FIELDVALUE(inrefBody.*:WORKINGBALANCE),'null');
+		SET outRef.data.accountName = COALESCE(FIELDVALUE(inrefBody.*:ACCOUNTTITLE1),'null');
+
+		SET Environment.payload =CAST(ASBITSTREAM (outRef)AS CHARACTER CCSID ccsidRef ENCODING encodeRef);
+		SET Environment.logType = 'APP_RES :';
+
+
+		IF envref.Dbloggingflag = 'Y' THEN
+			CALL DB_LOGGING_PROC(created_on, application_name, OutputRoot, Environment);
+		END IF;
+
+		IF envref.Consolelogflag = 'Y' THEN
+			LOG EVENT VALUES('APP_RES: ', Environment.payload, application_name, MessageFlowLabel, Environment.id, created_on,BrokerName,ExecutionGroupLabel,NodeLabel);
+		END IF;
+		-- END IF;
+
+		CREATE FIELD OutputRoot.HTTPResponseHeader;
+		DECLARE resHeders REFERENCE TO OutputRoot.HTTPResponseHeader;
+		SET resHeders."X-Request-Id" = Environment."X-Request-Id";
+		SET resHeders.servicecode = Environment.servicecode;
+		SET resHeders.channelname = Environment.channelname;
+		SET resHeders.Dbloggingflag = envref.Dbloggingflag;
+		SET resHeders.Consolelogflag = envref.Consolelogflag;
+		SET OutputLocalEnvironment.Destination.HTTP.RequestURL = getPolicyProperty('{userDefined}:userDefinedPolicy','T24_URL');
+
+		
+	END;
+END MODULE;

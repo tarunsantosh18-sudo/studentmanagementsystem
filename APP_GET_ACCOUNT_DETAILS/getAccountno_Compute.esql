@@ -1,0 +1,91 @@
+
+
+
+path GetAccountDetailsProc;
+
+DECLARE soapenv NAMESPACE 'http://schemas.xmlsoap.org/soap/envelope/';
+DECLARE cms NAMESPACE 'http://temenos.com/CMS-SERVICES';
+DECLARE dxp NAMESPACE 'http://temenos.com/CMS-SERVICES';
+
+CREATE COMPUTE MODULE getAccountno_Compute
+	CREATE FUNCTION Main() RETURNS BOOLEAN
+	BEGIN
+
+		CALL CopyEntireMessage();
+		RETURN TRUE;
+	END;
+	CREATE PROCEDURE CopyEntireMessage() BEGIN
+		Declare encodeRef , ccsidRef INTEGER;
+		SET encodeRef = InputRoot.Properties.Encoding;
+		SET ccsidRef = InputRoot.Properties.CodedCharSetId;
+		SET Environment.encodeRef = encodeRef;
+		SET Environment.ccsidRef = ccsidRef;
+
+		DECLARE application_name CHARACTER ApplicationLabel;
+		DECLARE created_on TIMESTAMP CURRENT_TIMESTAMP;
+		DECLARE headerRef REFERENCE TO InputRoot.HTTPInputHeader;
+		CREATE FIELD Environment.Variables.Values;
+		DECLARE envref REFERENCE TO Environment.Variables.Values;
+		SET Environment."X-Request-Id" = headerRef."X-Request-Id";
+		SET Environment.servicecode = headerRef.servicecode;
+		SET Environment.channelname = headerRef.channelname;
+		SET Environment.logType = 'APP_REQ';
+		SET Environment.flowName = MessageFlowLabel;
+		SET envref.Dbloggingflag = headerRef.Dbloggingflag;
+		SET envref.Consolelogflag = headerRef.Consolelogflag;
+
+		DECLARE parmsRef REFERENCE TO InputLocalEnvironment.REST.Input.Parameters;
+
+		IF CONTAINS(FIELDNAME(parmsRef.accountno),'accountno') IS NOT TRUE THEN
+			THROW USER EXCEPTION
+			VALUES(COALESCE(FIELDNAME(parmsRef.accountno),'accountno') || ' ' || ' is Missing from the parameter');
+		END IF;
+
+		CREATE LASTCHILD OF Environment DOMAIN 'JSON';
+		CREATE FIELD Environment.JSON.Data;
+		SET Environment.JSON.Data = parmsRef;
+		SET Environment.payload = CAST(ASBITSTREAM(Environment.JSON.Data) AS CHARACTER CCSID Environment.ccsidRef ENCODING Environment.encodeRef);
+
+		IF envref.Dbloggingflag = 'Y' THEN
+			CALL DB_LOGGING_PROC (created_on, application_name, OutputRoot, Environment);
+		END IF;
+
+		IF envref.Consolelogflag = 'Y' THEN
+			LOG EVENT VALUES('APP_REQ', Environment.payload, application_name, MessageFlowLabel, Environment."X-Request-Id", created_on, BrokerName, ExecutionGroupLabel, NodeLabel);
+		END IF;
+		-- Following Lines of Code is to Transform Channel Request in JSON Format to Host Reqest in SOAP Format
+		CREATE FIELD OutputRoot.XMLNSC.soapenv:Envelope;
+		DECLARE envlope REFERENCE TO OutputRoot.XMLNSC.soapenv:Envelope;
+		SET envlope.(XMLNSC.NamespaceDecl)xmlns:soapenv = soapenv;
+		SET envlope.(XMLNSC.NamespaceDecl)xmlns:cms = cms;
+		SET envlope.(XMLNSC.NamespaceDecl)xmlns:dxp=dxp;
+		CREATE FIELD OutputRoot.XMLNSC.soapenv:Envelope.soapenv:Header;
+		CREATE FIELD OutputRoot.XMLNSC.soapenv:Envelope.soapenv:Body.dxp:SBGetAccountDetails;
+
+		DECLARE outBody REFERENCE TO OutputRoot.XMLNSC.soapenv:Envelope.soapenv:Body.dxp:SBGetAccountDetails;
+		CREATE FIELD OutputRoot.XMLNSC.soapenv:Envelope.soapenv:Body.dxp:SBGetAccountDetails.WebRequestCommon;
+		DECLARE webReq REFERENCE TO OutputRoot.XMLNSC.soapenv:Envelope.soapenv:Body.dxp:SBGetAccountDetails.WebRequestCommon;
+		SET webReq.company = getPolicyProperty('{UserDefinedPolicy}:userDefinedPolicy', 'COMPANY');
+		SET webReq.password = getPolicyProperty('{UserDefinedPolicy}:userDefinedPolicy', 'PASSWORD');
+		SET webReq.userName = getPolicyProperty('{UserDefinedPolicy}:userDefinedPolicy', 'USERNAME');
+		-- SET outBody.OfsFunction ='';
+		SET outBody.SBGETACCOUNTDETAILSType.enquiryInputCollection.columnName = 'ACCOUNT.NUMBER';
+		SET outBody.SBGETACCOUNTDETAILSType.enquiryInputCollection.criteriaValue = parmsRef.accountno;
+		SET outBody.SBGETACCOUNTDETAILSType.enquiryInputCollection.operand = 'EQ';
+		SET Environment.payload = CAST(ASBITSTREAM(OutputRoot.XMLNSC) AS CHARACTER CCSID ccsidRef ENCODING encodeRef);
+		SET Environment.logType = 'HOST_REQ :';
+		IF envref.Dbloggingflag = 'Y' THEN
+			CALL DB_LOGGING_PROC (created_on, application_name, OutputRoot, Environment);
+		END IF;
+		IF envref.Consolelogflag = 'Y' THEN
+			LOG EVENT VALUES('HOST_REQ: ', Environment.payload, application_name, MessageFlowLabel, Environment."X-Request-Id", created_on, BrokerName, ExecutionGroupLabel, NodeLabel);
+		END IF;
+		SET OutputLocalEnvironment.Destination.HTTP.RequestURL = getPolicyProperty('{UserDefined}:UserDefinedPolicy','T24_URL');
+	END;
+
+END MODULE;
+
+CREATE PROCEDURE  getPolicyProperty(IN policyName CHARACTER, IN propertyName CHARACTER )
+RETURNS CHARACTER
+LANGUAGE JAVA
+EXTERNAL NAME "userDefinedPolicy.MyPolicyAcessClass.getPolicyProperty";
