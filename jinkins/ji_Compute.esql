@@ -1,0 +1,12 @@
+
+
+CREATE COMPUTE MODULE ji_Compute
+	CREATE FUNCTION Main() RETURNS BOOLEAN
+	BEGIN
+				SET OutputRoot = InputRoot;
+	
+		RETURN TRUE;
+	END;
+
+
+END MODULE;
